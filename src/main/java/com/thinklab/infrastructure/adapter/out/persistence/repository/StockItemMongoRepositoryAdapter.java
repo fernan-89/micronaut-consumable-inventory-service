@@ -7,6 +7,7 @@ import com.mongodb.client.model.Updates;
 import com.mongodb.reactivestreams.client.MongoClient;
 import com.mongodb.reactivestreams.client.MongoCollection;
 import com.thinklab.domain.exception.DuplicateStockItemException;
+import com.thinklab.domain.exception.InvalidStockItemStatusException;
 import com.thinklab.domain.exception.StockItemNotFoundException;
 import com.thinklab.domain.model.StockEntry;
 import com.thinklab.domain.model.StockItem;
@@ -113,7 +114,21 @@ public class StockItemMongoRepositoryAdapter implements StockItemRepository {
 
     @Override
     public Mono<Void> updateStatus(UUID id, StockStatus status, StockEntry entry) {
-        return executeUpdate(id, Updates.combine(Updates.set("status", status.name()), Updates.set("updatedAt", Instant.now()), pushEntry(entry)));
+        // Guarded write (platform race audit): the only transition is ACTIVE -> DISCONTINUED, so it applies only to an item that is still ACTIVE; of
+        // simultaneous discontinuations one wins and the others are refused (409), instead of each appending its own history entry.
+        Bson update = Updates.combine(Updates.set("status", status.name()), Updates.set("updatedAt", Instant.now()), pushEntry(entry));
+        Bson guard = Filters.and(Filters.eq("_id", id), Filters.eq("status", StockStatus.ACTIVE.name()));
+        return Mono.from(collection().updateOne(guard, update))
+                .flatMap(result -> {
+                    if (result.getMatchedCount() > 0) {
+                        return Mono.<Void>empty();
+                    }
+                    return Mono.from(collection().countDocuments(Filters.eq("_id", id)))
+                            .flatMap(count -> count == 0
+                                    ? Mono.<Void>error(new StockItemNotFoundException(id))
+                                    : Mono.<Void>error(new InvalidStockItemStatusException(
+                                            "The stock item was changed by someone else while this change was being recorded; read it again and retry.")));
+                });
     }
 
     private static Bson pushEntry(StockEntry entry) {

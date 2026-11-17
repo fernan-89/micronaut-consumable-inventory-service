@@ -221,6 +221,7 @@ class StockItemMongoRepositoryAdapterTest {
                 .thenReturn(Mono.just(UpdateResult.acknowledged(1, 1L, null)))
                 .thenReturn(Mono.just(UpdateResult.acknowledged(0, 0L, null)))
                 .thenReturn(Mono.just(UpdateResult.acknowledged(0, 0L, null)));
+        when(collection.countDocuments(any(Bson.class))).thenReturn(Mono.just(0L));
         StockEntry updated = item.updateDetails("Toner XL", "box", 5, "clerk");
         StockEntry discontinued = item.discontinue("clerk");
 
@@ -238,5 +239,21 @@ class StockItemMongoRepositoryAdapterTest {
         BsonDocument status = render(update.getAllValues().get(1));
         assertEquals("DISCONTINUED", status.getDocument("$set").getString("status").getValue());
         assertEquals("DISCONTINUED", status.getDocument("$push").getDocument("history").getArray("$each").get(0).asDocument().getString("action").getValue());
+    }
+
+    @Test
+    @DisplayName("discontinuing is guarded on the item still being ACTIVE: a miss is a conflict when the item exists, and the filter says so")
+    void discontinueIsGuarded() {
+        when(collection.updateOne(any(Bson.class), any(Bson.class))).thenReturn(Mono.just(UpdateResult.acknowledged(0, 0L, null)));
+        when(collection.countDocuments(any(Bson.class))).thenReturn(Mono.just(1L));
+        StockEntry discontinued = item.discontinue("clerk");
+
+        StepVerifier.create(adapter.updateStatus(id, StockStatus.DISCONTINUED, discontinued))
+                .expectError(com.thinklab.domain.exception.InvalidStockItemStatusException.class).verify();
+
+        ArgumentCaptor<Bson> filter = ArgumentCaptor.forClass(Bson.class);
+        verify(collection).updateOne(filter.capture(), any(Bson.class));
+        String json = render(filter.getValue()).toJson();
+        assertTrue(json.contains("status") && json.contains("ACTIVE"), json);
     }
 }
