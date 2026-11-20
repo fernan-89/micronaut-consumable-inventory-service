@@ -53,7 +53,7 @@ class TransitionRaceIT implements TestPropertyProvider {
 
         assertEquals(1, results.stream().filter("OK"::equals).count(), results.toString());
         assertEquals(9, results.stream().filter(InvalidStockItemStatusException.class.getSimpleName()::equals).count(), results.toString());
-        var stored = repository.findById(item.id()).block();
+        var stored = repository.findById(item.id(), item.organisationId()).block();
         assertEquals(2, stored.getHistory().size(), "one entry for the opening stock and one for the single discontinuation that won");
     }
 }

@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -133,7 +134,8 @@ class StockPersistenceIT implements TestPropertyProvider {
     void adjustIsGuarded() {
         UUID org = UUID.randomUUID();
         StockItemResponse item = register(org, "FAN", 1, 10);
-        StockItem loaded = repository.findById(item.id()).block();
+        StockItem loaded = repository.findById(item.id(), item.organisationId()).block();
+        assertNull(repository.findById(item.id(), UUID.randomUUID()).block(), "another tenant's item is the same as none");
 
         StockEntry entry = new StockEntry(Instant.now(), "ADJUSTED", EXECUTOR, -3, 7, "recount");
         assertTrue(repository.adjust(item.id(), loaded.getOnHand(), 7, entry).block());

@@ -20,7 +20,7 @@ public interface StockItemRepository {
     /** Fails with {@code DuplicateStockItemException} when the organisation already has this SKU. */
     Mono<StockItem> create(StockItem item);
 
-    Mono<StockItem> findById(UUID id);
+    Mono<StockItem> findById(UUID id, UUID organisationId);
 
     /** The organisation's items by SKU, optionally only one status and/or one exact SKU. */
     Flux<StockItem> findAll(UUID organisationId, StockStatus status, String sku);
