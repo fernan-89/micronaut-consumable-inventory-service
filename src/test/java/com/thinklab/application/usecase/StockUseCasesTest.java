@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,11 +44,14 @@ class StockUseCasesTest {
 
     private final UUID id = UUID.randomUUID();
     private final UUID org = UUID.randomUUID();
+    private final UUID foreign = UUID.randomUUID();
     private StockItemLookup lookup;
 
     @BeforeEach
     void setUp() {
         lookup = new StockItemLookup(repository);
+        // another tenant's item is the same as none: the repository answers empty when asked in the wrong tenant
+        lenient().when(repository.findById(id, foreign)).thenReturn(Mono.empty());
     }
 
     private StockItem item(long onHand) {
@@ -88,11 +92,11 @@ class StockUseCasesTest {
     @Test
     @DisplayName("lookup answers a foreign tenant's item exactly like a missing one")
     void lookupScoping() {
-        when(repository.findById(id)).thenReturn(Mono.just(item(1)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(1)));
 
         StepVerifier.create(lookup.owned(id, org)).expectNextCount(1).verifyComplete();
-        StepVerifier.create(lookup.owned(id, UUID.randomUUID())).expectError(StockItemNotFoundException.class).verify();
-        when(repository.findById(id)).thenReturn(Mono.empty());
+        StepVerifier.create(lookup.owned(id, foreign)).expectError(StockItemNotFoundException.class).verify();
+        when(repository.findById(id, org)).thenReturn(Mono.empty());
         StepVerifier.create(lookup.owned(id, org)).expectError(StockItemNotFoundException.class).verify();
     }
 
@@ -100,7 +104,7 @@ class StockUseCasesTest {
     @DisplayName("receive and issue apply the signed delta with their history entry")
     void receiveAndIssue() {
         MoveStockUseCase useCase = new MoveStockUseCase(lookup, repository);
-        when(repository.findById(id)).thenReturn(Mono.just(item(5)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(5)));
         when(repository.applyDelta(eq(id), anyLong(), any(StockEntry.class))).thenReturn(Mono.just(true));
 
         StepVerifier.create(useCase.receive(id, org, 4, "delivery", EXECUTOR)).verifyComplete();
@@ -116,7 +120,7 @@ class StockUseCasesTest {
     @DisplayName("an issue larger than the balance is refused before any write")
     void issueTooMuch() {
         MoveStockUseCase useCase = new MoveStockUseCase(lookup, repository);
-        when(repository.findById(id)).thenReturn(Mono.just(item(2)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(2)));
 
         StepVerifier.create(useCase.issue(id, org, 3, null, EXECUTOR)).expectError(InsufficientStockException.class).verify();
         verify(repository, never()).applyDelta(any(), anyLong(), any());
@@ -126,7 +130,7 @@ class StockUseCasesTest {
     @DisplayName("when a concurrent writer got in between, the movement is refused as StockChanged and nothing is lost")
     void concurrentChange() {
         MoveStockUseCase useCase = new MoveStockUseCase(lookup, repository);
-        when(repository.findById(id)).thenReturn(Mono.just(item(5)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(5)));
         when(repository.applyDelta(eq(id), anyLong(), any(StockEntry.class))).thenReturn(Mono.just(false));
         when(repository.adjust(eq(id), anyLong(), anyLong(), any(StockEntry.class))).thenReturn(Mono.just(false));
 
@@ -139,7 +143,7 @@ class StockUseCasesTest {
     @DisplayName("adjust sets the counted quantity guarded by the quantity the caller saw")
     void adjust() {
         MoveStockUseCase useCase = new MoveStockUseCase(lookup, repository);
-        when(repository.findById(id)).thenReturn(Mono.just(item(5)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(5)));
         when(repository.adjust(eq(id), anyLong(), anyLong(), any(StockEntry.class))).thenReturn(Mono.just(true));
 
         StepVerifier.create(useCase.adjust(id, org, 8, "recount", EXECUTOR)).verifyComplete();
@@ -156,9 +160,9 @@ class StockUseCasesTest {
         MoveStockUseCase useCase = new MoveStockUseCase(lookup, repository);
         StockItem discontinued = item(5);
         discontinued.discontinue(EXECUTOR);
-        when(repository.findById(id)).thenReturn(Mono.just(item(5))).thenReturn(Mono.just(discontinued)).thenReturn(Mono.just(item(5)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(discontinued)).thenReturn(Mono.just(item(5)));
 
-        StepVerifier.create(useCase.receive(id, UUID.randomUUID(), 1, null, EXECUTOR)).expectError(StockItemNotFoundException.class).verify();
+        StepVerifier.create(useCase.receive(id, foreign, 1, null, EXECUTOR)).expectError(StockItemNotFoundException.class).verify();
         StepVerifier.create(useCase.receive(id, org, 1, null, EXECUTOR)).expectError(InvalidStockItemStatusException.class).verify();
         StepVerifier.create(useCase.adjust(id, org, 1, " ", EXECUTOR)).expectError(IllegalArgumentException.class).verify();
         verify(repository, never()).applyDelta(any(), anyLong(), any());
@@ -171,13 +175,13 @@ class StockUseCasesTest {
         UpdateStockItemUseCase useCase = new UpdateStockItemUseCase(lookup, repository);
         StockItem discontinued = item(5);
         discontinued.discontinue(EXECUTOR);
-        when(repository.findById(id)).thenReturn(Mono.just(item(5))).thenReturn(Mono.just(item(5))).thenReturn(Mono.just(discontinued));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(5))).thenReturn(Mono.just(discontinued));
         when(repository.updateDetails(eq(id), any(), any(), anyLong(), any(StockEntry.class))).thenReturn(Mono.empty());
 
         StepVerifier.create(useCase.execute(id, org, new UpdateStockItemRequest("Toner XL", "box", 4L), EXECUTOR)).verifyComplete();
         verify(repository).updateDetails(eq(id), eq("Toner XL"), eq("box"), eq(4L), any(StockEntry.class));
 
-        StepVerifier.create(useCase.execute(id, UUID.randomUUID(), new UpdateStockItemRequest("x", "u", 1L), EXECUTOR)).expectError(StockItemNotFoundException.class).verify();
+        StepVerifier.create(useCase.execute(id, foreign, new UpdateStockItemRequest("x", "u", 1L), EXECUTOR)).expectError(StockItemNotFoundException.class).verify();
         StepVerifier.create(useCase.execute(id, org, new UpdateStockItemRequest("x", "u", 1L), EXECUTOR)).expectError(InvalidStockItemStatusException.class).verify();
     }
 
@@ -187,13 +191,13 @@ class StockUseCasesTest {
         ControlStockItemUseCase useCase = new ControlStockItemUseCase(lookup, repository);
         StockItem already = item(5);
         already.discontinue(EXECUTOR);
-        when(repository.findById(id)).thenReturn(Mono.just(item(5))).thenReturn(Mono.just(already)).thenReturn(Mono.just(item(5)));
+        when(repository.findById(id, org)).thenReturn(Mono.just(item(5))).thenReturn(Mono.just(already));
         when(repository.updateStatus(eq(id), any(StockStatus.class), any(StockEntry.class))).thenReturn(Mono.empty());
 
         StepVerifier.create(useCase.discontinue(id, org, EXECUTOR)).verifyComplete();
         verify(repository).updateStatus(eq(id), eq(StockStatus.DISCONTINUED), any(StockEntry.class));
         StepVerifier.create(useCase.discontinue(id, org, EXECUTOR)).expectError(InvalidStockItemStatusException.class).verify();
-        StepVerifier.create(useCase.discontinue(id, UUID.randomUUID(), EXECUTOR)).expectError(StockItemNotFoundException.class).verify();
+        StepVerifier.create(useCase.discontinue(id, foreign, EXECUTOR)).expectError(StockItemNotFoundException.class).verify();
     }
 
     @Test
@@ -202,7 +206,7 @@ class StockUseCasesTest {
         RetrieveStockItemUseCase useCase = new RetrieveStockItemUseCase(lookup, repository);
         StockItem stocked = item(5);
         stocked.issue(3, "job", EXECUTOR);
-        when(repository.findById(id)).thenReturn(Mono.just(stocked));
+        when(repository.findById(id, org)).thenReturn(Mono.just(stocked));
         when(repository.findAll(org, null, null)).thenReturn(Flux.just(stocked));
         when(repository.findAll(org, StockStatus.DISCONTINUED, "TONER")).thenReturn(Flux.empty());
         when(repository.findLowStock(org)).thenReturn(Flux.just(stocked));
@@ -211,7 +215,7 @@ class StockUseCasesTest {
             assertEquals(2, r.onHand());
             assertEquals(true, r.belowReorderLevel());
         }).verifyComplete();
-        StepVerifier.create(useCase.byId(id, UUID.randomUUID())).expectError(StockItemNotFoundException.class).verify();
+        StepVerifier.create(useCase.byId(id, foreign)).expectError(StockItemNotFoundException.class).verify();
         StepVerifier.create(useCase.all(org, null, null)).expectNextCount(1).verifyComplete();
         StepVerifier.create(useCase.all(org, StockStatus.DISCONTINUED, "TONER")).verifyComplete();
         StepVerifier.create(useCase.lowStock(org)).expectNextCount(1).verifyComplete();
@@ -220,6 +224,6 @@ class StockUseCasesTest {
             assertEquals("ISSUED", history.get(0).action());
             assertEquals("INITIATED", history.get(1).action());
         }).verifyComplete();
-        StepVerifier.create(useCase.history(id, UUID.randomUUID())).expectError(StockItemNotFoundException.class).verify();
+        StepVerifier.create(useCase.history(id, foreign)).expectError(StockItemNotFoundException.class).verify();
     }
 }

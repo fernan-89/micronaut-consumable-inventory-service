@@ -125,8 +125,8 @@ class StockItemMongoRepositoryAdapterTest {
         when(collection.find(any(Bson.class))).thenReturn(publisher);
         when(publisher.first()).thenReturn(Mono.just(StockItemPersistenceMapper.toDocument(item))).thenReturn(Mono.empty());
 
-        StepVerifier.create(adapter.findById(id)).expectNextMatches(i -> i.getSku().equals("TONER")).verifyComplete();
-        StepVerifier.create(adapter.findById(id)).verifyComplete();
+        StepVerifier.create(adapter.findById(id, UUID.randomUUID())).expectNextMatches(i -> i.getSku().equals("TONER")).verifyComplete();
+        StepVerifier.create(adapter.findById(id, UUID.randomUUID())).verifyComplete();
     }
 
     @Test

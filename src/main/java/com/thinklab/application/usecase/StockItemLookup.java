@@ -22,8 +22,7 @@ public class StockItemLookup {
     }
 
     public Mono<StockItem> owned(UUID id, UUID organisationId) {
-        return stockItemRepository.findById(id)
-                .filter(item -> item.getOrganisationId().equals(organisationId))
+        return stockItemRepository.findById(id, organisationId)
                 .switchIfEmpty(Mono.error(new StockItemNotFoundException(id)));
     }
 }

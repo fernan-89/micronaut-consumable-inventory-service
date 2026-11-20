@@ -61,8 +61,8 @@ public class StockItemMongoRepositoryAdapter implements StockItemRepository {
     }
 
     @Override
-    public Mono<StockItem> findById(UUID id) {
-        return Mono.from(collection().find(Filters.eq("_id", id)).first()).map(StockItemPersistenceMapper::toDomain);
+    public Mono<StockItem> findById(UUID id, UUID organisationId) {
+        return Mono.from(collection().find(Filters.and(Filters.eq("_id", id), Filters.eq("organisationId", organisationId))).first()).map(StockItemPersistenceMapper::toDomain);
     }
 
     @Override
